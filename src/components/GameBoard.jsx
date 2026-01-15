@@ -1,15 +1,40 @@
 import { useState } from 'react';
 import { PlayerCard } from './PlayerCard';
 import { ChatLog } from './ChatLog';
+import { PersonalitySettings } from './PersonalitySettings';
 import { useGame, GAME_PHASES } from '../hooks/useGame';
-import { initAI } from '../utils/ai';
+import { initAI, validateAPIKey } from '../utils/ai';
+import { initializePersonalities } from '../utils/personalities';
 import './GameBoard.css';
 
+// localStorage key for API key cache
+const API_KEY_STORAGE_KEY = 'langrensha_api_key';
+
 export function GameBoard() {
-	const [apiKey, setApiKey] = useState('');
-	const [apiKeySet, setApiKeySet] = useState(false);
+	// Initialize apiKey from localStorage cache
+	const [apiKey, setApiKey] = useState(() => {
+		const cached = localStorage.getItem(API_KEY_STORAGE_KEY);
+		return cached || '';
+	});
+	const [apiKeySet, setApiKeySet] = useState(() => {
+		const cached = localStorage.getItem(API_KEY_STORAGE_KEY);
+		if (cached) {
+			try {
+				initAI(cached);
+				return true;
+			} catch (error) {
+				localStorage.removeItem(API_KEY_STORAGE_KEY);
+				return false;
+			}
+		}
+		return false;
+	});
 	const [speechInput, setSpeechInput] = useState('');
 	const [selectedPlayer, setSelectedPlayer] = useState(null);
+	const [showPersonalitySettings, setShowPersonalitySettings] = useState(false);
+	const [personalities, setPersonalities] = useState(() => initializePersonalities());
+	const [isValidating, setIsValidating] = useState(false);
+	const [validationResult, setValidationResult] = useState(null);
 
 	const {
 		players,
@@ -40,11 +65,18 @@ export function GameBoard() {
 		if (apiKey.trim()) {
 			try {
 				initAI(apiKey.trim());
+				// Save to localStorage for caching
+				localStorage.setItem(API_KEY_STORAGE_KEY, apiKey.trim());
 				setApiKeySet(true);
 			} catch (error) {
 				alert('API Key 设置失败: ' + error.message);
 			}
 		}
+	};
+
+	// 开始游戏（带人设）
+	const handleStartGame = () => {
+		startGame(personalities);
 	};
 
 	// 人类玩家发言
@@ -53,6 +85,11 @@ export function GameBoard() {
 			humanSpeak(speechInput.trim());
 			setSpeechInput('');
 		}
+	};
+
+	// 保存人设配置
+	const handleSavePersonalities = (newPersonalities) => {
+		setPersonalities(newPersonalities);
 	};
 
 	// 渲染设置页面
@@ -69,27 +106,68 @@ export function GameBoard() {
 							<input
 								type="password"
 								value={apiKey}
-								onChange={(e) => setApiKey(e.target.value)}
+								onChange={(e) => {
+									setApiKey(e.target.value);
+									setValidationResult(null);
+								}}
 								placeholder="输入你的 API Key"
 								onKeyDown={(e) => e.key === 'Enter' && handleSetApiKey()}
 							/>
 						</div>
-						<button className="btn-primary" onClick={handleSetApiKey}>
-							确认
-						</button>
+						<div className="api-buttons">
+							<button
+								className="btn-validate"
+								onClick={async () => {
+									if (!apiKey.trim()) return;
+									setIsValidating(true);
+									setValidationResult(null);
+									const result = await validateAPIKey(apiKey.trim());
+									setValidationResult(result);
+									setIsValidating(false);
+								}}
+								disabled={!apiKey.trim() || isValidating}
+							>
+								{isValidating ? '验证中...' : '🔍 验证'}
+							</button>
+							<button className="btn-primary" onClick={handleSetApiKey}>
+								确认
+							</button>
+						</div>
+						{validationResult && (
+							<div className={`validation-result ${validationResult.success ? 'success' : 'error'}`}>
+								{validationResult.success ? '✅' : '❌'} {validationResult.message}
+							</div>
+						)}
 						<p className="api-hint">
 							💡 API Key 仅用于调用 DeepSeek AI 生成发言
 						</p>
 					</div>
 				) : (
 					<div className="start-section">
-						<div className="api-status">✅ API Key 已设置</div>
-						<button className="btn-start" onClick={startGame}>
+						<div className="api-status">
+							✅ API Key 已设置
+							<button className="btn-change-api" onClick={() => setApiKeySet(false)}>
+								更改
+							</button>
+						</div>
+						<button className="btn-personality" onClick={() => setShowPersonalitySettings(true)}>
+							🎭 AI 人设设置
+						</button>
+						<button className="btn-start" onClick={handleStartGame}>
 							开始游戏
 						</button>
 					</div>
 				)}
 			</div>
+
+			{/* 人设设置弹窗 */}
+			{showPersonalitySettings && (
+				<PersonalitySettings
+					personalities={personalities}
+					onSave={handleSavePersonalities}
+					onClose={() => setShowPersonalitySettings(false)}
+				/>
+			)}
 		</div>
 	);
 

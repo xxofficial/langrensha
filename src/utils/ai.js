@@ -1,4 +1,5 @@
 import OpenAI from "openai";
+import { buildPersonalityPrompt } from "./personalities";
 
 let openaiClient = null;
 
@@ -17,8 +18,95 @@ export function getAIClient() {
 	return openaiClient;
 }
 
+// 验证 API Key 是否有效
+export async function validateAPIKey(apiKey) {
+	try {
+		const testClient = new OpenAI({
+			baseURL: 'https://api.deepseek.com',
+			apiKey: apiKey,
+			dangerouslyAllowBrowser: true
+		});
+
+		const completion = await testClient.chat.completions.create({
+			model: 'deepseek-chat',
+			messages: [
+				{ role: 'user', content: '你好' }
+			],
+			max_tokens: 5
+		});
+
+		return { success: true, message: 'API Key 验证成功！' };
+	} catch (error) {
+		console.error('API Key 验证失败:', error);
+		let errorMessage = 'API Key 验证失败';
+		if (error.status === 401) {
+			errorMessage = 'API Key 无效，请检查后重试';
+		} else if (error.status === 429) {
+			errorMessage = 'API 请求过于频繁，请稍后再试';
+		} else if (error.message) {
+			errorMessage = error.message;
+		}
+		return { success: false, message: errorMessage };
+	}
+}
+
+// 构建游戏上下文信息（包含历史发言和场上状态）
+function buildGameContext(gameState) {
+	const { day, alivePlayers, allSpeeches, players, todaySpeeches } = gameState;
+
+	// 获取已死亡的玩家
+	const deadPlayers = (players || []).filter(p => !p.isAlive);
+
+	// 格式化历史发言（按天分组）
+	const formatHistoricalSpeeches = () => {
+		if (!allSpeeches || allSpeeches.length === 0) {
+			return '暂无历史发言记录';
+		}
+
+		// 按天分组
+		const speechesByDay = {};
+		allSpeeches.forEach(s => {
+			if (!speechesByDay[s.day]) {
+				speechesByDay[s.day] = [];
+			}
+			speechesByDay[s.day].push(s);
+		});
+
+		// 格式化输出
+		let result = '';
+		Object.keys(speechesByDay).sort((a, b) => a - b).forEach(d => {
+			result += `\n【第${d}天发言】\n`;
+			speechesByDay[d].forEach(s => {
+				result += `${s.playerName}: ${s.content}\n`;
+			});
+		});
+
+		return result.trim();
+	};
+
+	// 格式化今天的发言
+	const formatTodaySpeeches = () => {
+		if (!todaySpeeches || todaySpeeches.length === 0) {
+			return '今天暂无发言';
+		}
+		return todaySpeeches.map(s => `${s.playerName}: ${s.content}`).join('\n');
+	};
+
+	return {
+		currentDay: day,
+		alivePlayerNames: alivePlayers.map(p => p.name).join(', '),
+		alivePlayerCount: alivePlayers.length,
+		deadPlayerNames: deadPlayers.length > 0 ? deadPlayers.map(p => p.name).join(', ') : '无',
+		deadPlayerCount: deadPlayers.length,
+		historicalSpeeches: formatHistoricalSpeeches(),
+		todaySpeeches: formatTodaySpeeches()
+	};
+}
+
 // 构建角色系统提示词
 function buildSystemPrompt(player, gameState) {
+	const context = buildGameContext(gameState);
+
 	const rolePrompts = {
 		werewolf: `你是一名狼人玩家，你的名字是${player.name}。你的队友是另一名狼人。
 你的目标是隐藏自己的身份，误导村民，并在投票中除掉威胁。
@@ -43,19 +131,30 @@ function buildSystemPrompt(player, gameState) {
 发言时要认真分析其他人的发言，找出可疑的人。`
 	};
 
+	// 获取人设提示词
+	const personalityPrompt = buildPersonalityPrompt(player.personality);
+
 	return `你正在玩一个8人狼人杀游戏。这是第${gameState.day}天${gameState.phase === 'day' ? '白天' : '夜晚'}。
 
 ${rolePrompts[player.role.id]}
+${personalityPrompt}
 
-当前存活玩家: ${gameState.alivePlayers.map(p => p.name).join(', ')}
+=== 当前场上状态 ===
+存活玩家(${context.alivePlayerCount}人): ${context.alivePlayerNames}
+已死亡玩家: ${context.deadPlayerNames}
 ${gameState.lastNightDeath ? `昨晚死亡: ${gameState.lastNightDeath}` : ''}
 ${gameState.lastVoteDeath ? `上次投票放逐: ${gameState.lastVoteDeath}` : ''}
 
-请用1-3句话发表你的看法，要有个人特色，可以怀疑某人或为自己辩护。发言要像真人玩家一样。`;
+=== 所有历史发言记录 ===
+${context.historicalSpeeches}
+
+请用1-3句话发表你的看法，要有个人特色，可以怀疑某人或为自己辩护。发言要像真人玩家一样，并且要结合历史发言分析场上局势，符合你的人设性格和说话风格。`;
 }
 
 // 构建投票系统提示词
 function buildVotePrompt(player, gameState, candidates) {
+	const context = buildGameContext(gameState);
+
 	const roleHints = {
 		werewolf: `作为狼人，你应该投票给对狼人阵营威胁最大的人，或者跟随多数投票避免暴露。
 千万不要投给自己的狼人队友！`,
@@ -69,12 +168,15 @@ function buildVotePrompt(player, gameState, candidates) {
 
 ${roleHints[player.role.id]}
 
+=== 当前场上状态 ===
+存活玩家(${context.alivePlayerCount}人): ${context.alivePlayerNames}
+已死亡玩家: ${context.deadPlayerNames}
 可选择投票的玩家: ${candidates.map(p => p.name).join(', ')}
 
-今天的发言记录:
-${gameState.todaySpeeches.map(s => `${s.playerName}: ${s.content}`).join('\n')}
+=== 所有历史发言记录 ===
+${context.historicalSpeeches}
 
-请只回复你要投票的玩家名字，不要说其他话。`;
+请根据以上所有发言记录分析，找出最可疑的人。只回复你要投票的玩家名字，不要说其他话。`;
 }
 
 // 生成 AI 发言
@@ -136,17 +238,25 @@ export async function generateWerewolfKill(werewolves, targets, gameState) {
 	}
 
 	try {
+		const context = buildGameContext(gameState);
 		const wolf = werewolves[0]; // 使用第一个狼人做决策
+
+		const prompt = `你是狼人，需要选择今晚杀死的目标。优先考虑杀死预言家或女巫等神职。
+
+=== 当前场上状态 ===
+存活玩家(${context.alivePlayerCount}人): ${context.alivePlayerNames}
+已死亡玩家: ${context.deadPlayerNames}
+可选目标: ${targets.map(p => p.name).join(', ')}
+
+=== 所有历史发言记录 ===
+${context.historicalSpeeches}
+
+请根据以上发言分析，找出最可能是神职的玩家。选择今晚杀死谁？只回复玩家名字。`;
+
 		const completion = await openaiClient.chat.completions.create({
 			model: 'deepseek-chat',
 			messages: [
-				{
-					role: 'system',
-					content: `你是狼人，需要选择今晚杀死的目标。优先考虑杀死预言家或女巫等神职。
-可选目标: ${targets.map(p => p.name).join(', ')}
-今天的发言记录:
-${gameState.todaySpeeches.map(s => `${s.playerName}: ${s.content}`).join('\n')}`
-				},
+				{ role: 'system', content: prompt },
 				{ role: 'user', content: '选择今晚杀死谁？只回复玩家名字。' }
 			],
 			max_tokens: 20,
@@ -169,15 +279,25 @@ export async function generateSeerCheck(seer, targets, gameState) {
 	}
 
 	try {
+		const context = buildGameContext(gameState);
+
+		const prompt = `你是预言家，需要选择今晚查验的目标。优先查验可疑的人。
+
+=== 当前场上状态 ===
+存活玩家(${context.alivePlayerCount}人): ${context.alivePlayerNames}
+已死亡玩家: ${context.deadPlayerNames}
+已查验过的玩家: ${(seer.seerResults || []).map(r => `${r.name}(是${r.isWolf ? '狼人' : '好人'})`).join(', ') || '无'}
+可选目标: ${targets.map(p => p.name).join(', ')}
+
+=== 所有历史发言记录 ===
+${context.historicalSpeeches}
+
+请根据以上发言分析，找出最可疑的玩家进行查验。选择今晚查验谁？只回复玩家名字。`;
+
 		const completion = await openaiClient.chat.completions.create({
 			model: 'deepseek-chat',
 			messages: [
-				{
-					role: 'system',
-					content: `你是预言家，需要选择今晚查验的目标。优先查验可疑的人。
-已查验过的玩家: ${(seer.seerResults || []).map(r => r.name).join(', ') || '无'}
-可选目标: ${targets.map(p => p.name).join(', ')}`
-				},
+				{ role: 'system', content: prompt },
 				{ role: 'user', content: '选择今晚查验谁？只回复玩家名字。' }
 			],
 			max_tokens: 20,
@@ -205,21 +325,26 @@ export async function generateWitchDecision(witch, killedPlayer, poisonTargets, 
 	}
 
 	try {
+		const context = buildGameContext(gameState);
 		const canHeal = witch.witchPotion?.heal && killedPlayer;
 		const canPoison = witch.witchPotion?.poison && poisonTargets.length > 0;
 
 		let prompt = `你是女巫，你的名字是${witch.name}。现在是夜晚，你需要决定是否使用药水。
 
-当前情况：
+=== 当前情况 ===
 - 解药: ${witch.witchPotion?.heal ? '有' : '已使用'}
 - 毒药: ${witch.witchPotion?.poison ? '有' : '已使用'}
 ${killedPlayer ? `- 今晚被狼人杀死的玩家: ${killedPlayer.name}` : '- 今晚没有人被狼人杀死'}
 ${canPoison ? `- 可以毒杀的玩家: ${poisonTargets.map(p => p.name).join(', ')}` : ''}
 
-今天的发言记录:
-${gameState.todaySpeeches?.map(s => `${s.playerName}: ${s.content}`).join('\n') || '暂无发言记录'}
+=== 当前场上状态 ===
+存活玩家(${context.alivePlayerCount}人): ${context.alivePlayerNames}
+已死亡玩家: ${context.deadPlayerNames}
 
-请分析局势做出决策。回复格式必须严格按照以下格式之一：
+=== 所有历史发言记录 ===
+${context.historicalSpeeches}
+
+请根据以上发言分析局势做出决策。回复格式必须严格按照以下格式之一：
 1. 如果要救人: "救人"
 2. 如果要毒杀某人: "毒杀 [玩家名字]"
 3. 如果不使用药水: "不使用"
@@ -270,16 +395,21 @@ export async function generateHunterShoot(hunter, targets, gameState, deathReaso
 	}
 
 	try {
+		const context = buildGameContext(gameState);
+
 		const prompt = `你是猎人，你的名字是${hunter.name}。你刚刚${deathReason === 'vote' ? '被投票放逐' : '被狼人杀死'}了！
 
 作为猎人，你死亡时有开枪带走一名玩家的技能。你需要决定是否开枪，以及开枪的目标。
 
-当前存活玩家: ${targets.map(p => p.name).join(', ')}
+=== 当前场上状态 ===
+存活玩家(${context.alivePlayerCount}人): ${context.alivePlayerNames}
+已死亡玩家: ${context.deadPlayerNames}
+可选目标: ${targets.map(p => p.name).join(', ')}
 
-今天的发言记录:
-${gameState.todaySpeeches?.map(s => `${s.playerName}: ${s.content}`).join('\n') || '暂无发言记录'}
+=== 所有历史发言记录 ===
+${context.historicalSpeeches}
 
-请分析谁最可能是狼人，做出决策。回复格式必须严格按照以下格式之一：
+请根据以上所有发言分析谁最可能是狼人，做出决策。回复格式必须严格按照以下格式之一：
 1. 如果要开枪: "开枪 [玩家名字]"
 2. 如果不开枪（非常不推荐，因为浪费技能）: "不开枪"
 

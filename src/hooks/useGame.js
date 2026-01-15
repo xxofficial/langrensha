@@ -36,9 +36,9 @@ export function useGame() {
 	}, []);
 
 	// 开始新游戏
-	const startGame = useCallback(() => {
+	const startGame = useCallback((personalities = null) => {
 		abortRef.current = false;
-		const newPlayers = createPlayers(0);
+		const newPlayers = createPlayers(0, personalities);
 		setPlayers(newPlayers);
 		setPhase(GAME_PHASES.ROLE_REVEAL);
 		setDay(1);
@@ -85,7 +85,9 @@ export function useGame() {
 			day,
 			phase: 'night',
 			alivePlayers,
-			todaySpeeches: speeches
+			todaySpeeches: speeches,
+			allSpeeches,
+			players
 		};
 
 		// 1. 狼人杀人
@@ -117,7 +119,9 @@ export function useGame() {
 			day,
 			phase: 'night',
 			alivePlayers,
-			todaySpeeches: speeches
+			todaySpeeches: speeches,
+			allSpeeches,
+			players
 		};
 
 		let seerResult = null;
@@ -193,7 +197,9 @@ export function useGame() {
 					day,
 					phase: 'night',
 					alivePlayers,
-					todaySpeeches: speeches
+					todaySpeeches: speeches,
+					allSpeeches,
+					players
 				};
 
 				const decision = await generateWitchDecision(witch, killedPlayer, poisonTargets, gameState);
@@ -329,6 +335,8 @@ export function useGame() {
 				phase: 'day',
 				alivePlayers: getAlivePlayers(players),
 				todaySpeeches: speeches,
+				allSpeeches,
+				players,
 				lastNightDeath: nightActions.deaths?.map(id => players.find(p => p.id === id)?.name).join(', ') || null
 			};
 
@@ -399,7 +407,9 @@ export function useGame() {
 			day,
 			phase: 'vote',
 			alivePlayers,
-			todaySpeeches: speeches
+			todaySpeeches: speeches,
+			allSpeeches,
+			players
 		};
 
 		for (const voter of alivePlayers) {
@@ -437,7 +447,9 @@ export function useGame() {
 			day,
 			phase: 'vote',
 			alivePlayers,
-			todaySpeeches: speeches
+			todaySpeeches: speeches,
+			allSpeeches,
+			players
 		};
 
 		// 继续AI投票
@@ -512,7 +524,9 @@ export function useGame() {
 							day,
 							phase: 'vote',
 							alivePlayers: targets,
-							todaySpeeches: speeches
+							todaySpeeches: speeches,
+							allSpeeches,
+							players
 						};
 
 						const decision = await generateHunterShoot(eliminatedPlayer, targets, gameState, 'vote');

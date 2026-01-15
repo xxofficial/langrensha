@@ -66,21 +66,31 @@ export function assignRoles(playerCount = 8) {
 }
 
 // 创建玩家列表
-export function createPlayers(humanPlayerIndex = 0) {
+export function createPlayers(humanPlayerIndex = 0, personalities = null) {
 	const roles = assignRoles(8);
 	const playerNames = ['玩家', 'AI-小明', 'AI-小红', 'AI-小刚', 'AI-小丽', 'AI-小华', 'AI-小龙', 'AI-小凤'];
 
-	return roles.map((role, index) => ({
-		id: index,
-		name: playerNames[index],
-		role: role,
-		isAlive: true,
-		isHuman: index === humanPlayerIndex,
-		// 女巫的药水状态
-		witchPotion: role.id === 'witch' ? { heal: true, poison: true } : null,
-		// 预言家的查验记录
-		seerResults: role.id === 'seer' ? [] : null
-	}));
+	return roles.map((role, index) => {
+		// 获取对应的人设（AI 玩家从索引 1 开始）
+		let personality = null;
+		if (index > 0 && personalities) {
+			personality = personalities.find(p => p.id === index) || null;
+		}
+
+		return {
+			id: index,
+			name: playerNames[index],
+			role: role,
+			isAlive: true,
+			isHuman: index === humanPlayerIndex,
+			// 女巫的药水状态
+			witchPotion: role.id === 'witch' ? { heal: true, poison: true } : null,
+			// 预言家的查验记录
+			seerResults: role.id === 'seer' ? [] : null,
+			// AI 人设
+			personality: personality
+		};
+	});
 }
 
 // 获取存活玩家
