@@ -148,7 +148,9 @@ ${gameState.lastVoteDeath ? `上次投票放逐: ${gameState.lastVoteDeath}` : '
 === 所有历史发言记录 ===
 ${context.historicalSpeeches}
 
-请用1-3句话发表你的看法，要有个人特色，可以怀疑某人或为自己辩护。发言要像真人玩家一样，并且要结合历史发言分析场上局势，符合你的人设性格和说话风格。`;
+请发表你的看法，要有个人特色，可以怀疑某人或为自己辩护。发言要像真人玩家一样，可长可短，根据当前局势自由决定发言内容和长度，并且要结合历史发言分析场上局势，符合你的人设性格和说话风格。
+
+【重要提示】这是一个纯语言游戏，你的发言只需要包含说话内容，不要描述任何动作、表情、肢体语言或心理活动（如"*皱眉*"、"（沉思）"、"露出笑容"等）。直接说出你要表达的话即可。`;
 }
 
 // 构建投票系统提示词
@@ -450,3 +452,97 @@ ${context.historicalSpeeches}
 	}
 }
 
+// 生成游戏结束分析
+export async function generateGameAnalysis(players, allSpeeches, gameResult) {
+	if (!openaiClient) {
+		return '无法生成游戏分析：AI 客户端未初始化';
+	}
+
+	try {
+		// 格式化所有玩家信息（包含真实身份）
+		const formatPlayerInfo = () => {
+			return players.map(p => {
+				const statusIcon = p.isAlive ? '✓存活' : '✗死亡';
+				const humanTag = p.isHuman ? '【玩家】' : '';
+				return `${p.name}${humanTag}: ${p.role.emoji}${p.role.name} (${statusIcon})`;
+			}).join('\n');
+		};
+
+		// 格式化所有历史发言（按天分组）
+		const formatAllSpeeches = () => {
+			if (!allSpeeches || allSpeeches.length === 0) {
+				return '无发言记录';
+			}
+
+			const speechesByDay = {};
+			allSpeeches.forEach(s => {
+				if (!speechesByDay[s.day]) {
+					speechesByDay[s.day] = [];
+				}
+				speechesByDay[s.day].push(s);
+			});
+
+			let result = '';
+			Object.keys(speechesByDay).sort((a, b) => a - b).forEach(d => {
+				result += `\n【第${d}天发言】\n`;
+				speechesByDay[d].forEach(s => {
+					const player = players.find(p => p.id === s.playerId);
+					const roleInfo = player ? `[${player.role.name}]` : '';
+					result += `${s.playerName}${roleInfo}: ${s.content}\n`;
+				});
+			});
+
+			return result.trim();
+		};
+
+		const prompt = `你是一位专业的狼人杀游戏分析师。请根据以下游戏信息，给出一份详细、专业的游戏分析报告。
+
+=== 游戏结果 ===
+${gameResult.winner === 'good' ? '🎉 好人阵营胜利' : '🐺 狼人阵营胜利'}
+${gameResult.message}
+
+=== 所有玩家身份 ===
+${formatPlayerInfo()}
+
+=== 完整发言记录 ===
+${formatAllSpeeches()}
+
+请从以下几个方面进行分析：
+
+1. **游戏概述**：简述这局游戏的大致走向和胜负关键
+
+2. **狼人表现分析**：
+   - 狼人的隐藏和伪装策略如何？
+   - 狼人杀人选择是否合理？
+   - 狼人发言有哪些破绽或亮点？
+
+3. **神职表现分析**：
+   - 预言家/女巫/猎人的发言和操作是否得当？
+   - 有没有正确引导村民？
+
+4. **关键回合分析**：
+   - 哪些回合的发言或投票是决定胜负的关键？
+   - 有没有精彩的博弈或失误？
+
+5. **玩家建议**：
+   - 针对玩家（标注【玩家】的那位）的表现给出具体建议
+   - 玩家做得好的地方和需要改进的地方
+
+请用清晰的结构输出分析，语言要专业但易懂，像一位经验丰富的狼人杀主持人在复盘。`;
+
+		const completion = await openaiClient.chat.completions.create({
+			model: 'deepseek-chat',
+			messages: [
+				{ role: 'system', content: '你是一位专业的狼人杀游戏分析师，擅长复盘分析和给出建议。' },
+				{ role: 'user', content: prompt }
+			],
+			max_tokens: 1500,
+			temperature: 0.7
+		});
+
+		return completion.choices[0].message.content;
+	} catch (error) {
+		console.error('游戏分析生成失败:', error);
+		return '游戏分析生成失败：' + error.message;
+	}
+}

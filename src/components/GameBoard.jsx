@@ -3,7 +3,7 @@ import { PlayerCard } from './PlayerCard';
 import { ChatLog } from './ChatLog';
 import { PersonalitySettings } from './PersonalitySettings';
 import { useGame, GAME_PHASES } from '../hooks/useGame';
-import { initAI, validateAPIKey } from '../utils/ai';
+import { initAI, validateAPIKey, generateGameAnalysis } from '../utils/ai';
 import { initializePersonalities } from '../utils/personalities';
 import './GameBoard.css';
 
@@ -35,6 +35,11 @@ export function GameBoard() {
 	const [personalities, setPersonalities] = useState(() => initializePersonalities());
 	const [isValidating, setIsValidating] = useState(false);
 	const [validationResult, setValidationResult] = useState(null);
+	const [playerName, setPlayerName] = useState(() => {
+		return localStorage.getItem('langrensha_player_name') || '玩家';
+	});
+	const [gameAnalysis, setGameAnalysis] = useState(null);
+	const [isAnalyzing, setIsAnalyzing] = useState(false);
 
 	const {
 		players,
@@ -74,9 +79,11 @@ export function GameBoard() {
 		}
 	};
 
-	// 开始游戏（带人设）
+	// 开始游戏（带人设和玩家名字）
 	const handleStartGame = () => {
-		startGame(personalities);
+		const name = playerName.trim() || '玩家';
+		localStorage.setItem('langrensha_player_name', name);
+		startGame(personalities, name);
 	};
 
 	// 人类玩家发言
@@ -149,6 +156,16 @@ export function GameBoard() {
 							<button className="btn-change-api" onClick={() => setApiKeySet(false)}>
 								更改
 							</button>
+						</div>
+						<div className="input-group player-name-group">
+							<label>👤 你的名字</label>
+							<input
+								type="text"
+								value={playerName}
+								onChange={(e) => setPlayerName(e.target.value)}
+								placeholder="输入你的名字"
+								maxLength={10}
+							/>
 						</div>
 						<button className="btn-personality" onClick={() => setShowPersonalitySettings(true)}>
 							🎭 AI 人设设置
@@ -410,29 +427,66 @@ export function GameBoard() {
 	);
 
 	// 渲染游戏结束
-	const renderGameOver = () => (
-		<div className="game-over">
-			<div className={`result-card ${gameResult?.winner}`}>
-				<h2>{gameResult?.winner === 'good' ? '🎉 好人胜利!' : '🐺 狼人胜利!'}</h2>
-				<p>{gameResult?.message}</p>
-				<div className="final-roles">
-					<h3>玩家身份</h3>
-					<div className="roles-grid">
-						{players.map(p => (
-							<div key={p.id} className={`role-item ${p.isAlive ? 'alive' : 'dead'}`}>
-								<span>{p.role.emoji}</span>
-								<span>{p.name}</span>
-								<span>{p.role.name}</span>
-							</div>
-						))}
+	const renderGameOver = () => {
+		// 自动生成游戏分析（只生成一次）
+		if (!gameAnalysis && !isAnalyzing && gameResult) {
+			setIsAnalyzing(true);
+			generateGameAnalysis(players, allSpeeches, gameResult)
+				.then(analysis => {
+					setGameAnalysis(analysis);
+					setIsAnalyzing(false);
+				})
+				.catch(err => {
+					setGameAnalysis('分析生成失败: ' + err.message);
+					setIsAnalyzing(false);
+				});
+		}
+
+		return (
+			<div className="game-over">
+				<div className={`result-card ${gameResult?.winner}`}>
+					<h2>{gameResult?.winner === 'good' ? '🎉 好人胜利!' : '🐺 狼人胜利!'}</h2>
+					<p>{gameResult?.message}</p>
+					<div className="final-roles">
+						<h3>玩家身份</h3>
+						<div className="roles-grid">
+							{players.map(p => (
+								<div key={p.id} className={`role-item ${p.isAlive ? 'alive' : 'dead'}`}>
+									<span>{p.role.emoji}</span>
+									<span>{p.name}</span>
+									<span>{p.role.name}</span>
+								</div>
+							))}
+						</div>
 					</div>
+
+					{/* 游戏分析区域 */}
+					<div className="game-analysis">
+						<h3>📊 游戏分析</h3>
+						{isAnalyzing ? (
+							<div className="analysis-loading">
+								<div className="loading-spinner"></div>
+								<p>AI 正在分析游戏...</p>
+							</div>
+						) : gameAnalysis ? (
+							<div className="analysis-content">
+								{gameAnalysis.split('\n').map((line, index) => (
+									<p key={index}>{line}</p>
+								))}
+							</div>
+						) : null}
+					</div>
+
+					<button className="btn-primary" onClick={() => {
+						setGameAnalysis(null);
+						resetGame();
+					}}>
+						重新开始
+					</button>
 				</div>
-				<button className="btn-primary" onClick={resetGame}>
-					重新开始
-				</button>
 			</div>
-		</div>
-	);
+		);
+	};
 
 	// 渲染主游戏区域
 	const renderGameContent = () => {
@@ -495,7 +549,7 @@ export function GameBoard() {
 					<div className="action-area">
 						{renderGameContent()}
 					</div>
-					<ChatLog logs={logs} />
+					<ChatLog logs={logs} players={players} />
 				</div>
 			</div>
 

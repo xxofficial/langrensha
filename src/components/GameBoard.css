@@ -740,3 +740,89 @@
 	color: #64748b;
 	padding: 40px 20px;
 }
+
+/* 游戏分析区域 */
+.game-analysis {
+	margin: 24px 0;
+	padding: 24px;
+	background: rgba(30, 30, 50, 0.6);
+	border-radius: 16px;
+	border: 1px solid rgba(100, 100, 150, 0.3);
+	text-align: left;
+}
+
+.game-analysis h3 {
+	margin: 0 0 16px;
+	color: #a5b4fc;
+	font-size: 1.2rem;
+	text-align: center;
+}
+
+.analysis-loading {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 16px;
+	padding: 32px;
+}
+
+.loading-spinner {
+	width: 40px;
+	height: 40px;
+	border: 3px solid rgba(129, 140, 248, 0.2);
+	border-top-color: #818cf8;
+	border-radius: 50%;
+	animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+	to {
+		transform: rotate(360deg);
+	}
+}
+
+.analysis-loading p {
+	color: #94a3b8;
+	margin: 0;
+}
+
+.analysis-content {
+	max-height: 400px;
+	overflow-y: auto;
+	padding-right: 8px;
+}
+
+.analysis-content p {
+	margin: 0 0 8px;
+	line-height: 1.7;
+	color: #e2e8f0;
+	font-size: 0.95rem;
+}
+
+.analysis-content p:empty {
+	height: 8px;
+}
+
+/* 滚动条样式 */
+.analysis-content::-webkit-scrollbar {
+	width: 6px;
+}
+
+.analysis-content::-webkit-scrollbar-track {
+	background: rgba(40, 40, 60, 0.5);
+	border-radius: 3px;
+}
+
+.analysis-content::-webkit-scrollbar-thumb {
+	background: rgba(129, 140, 248, 0.4);
+	border-radius: 3px;
+}
+
+.analysis-content::-webkit-scrollbar-thumb:hover {
+	background: rgba(129, 140, 248, 0.6);
+}
+
+/* 玩家名字输入组 */
+.player-name-group {
+	margin-bottom: 16px;
+}

@@ -65,32 +65,60 @@ export function assignRoles(playerCount = 8) {
 	return shuffledRoles.slice(0, playerCount);
 }
 
-// 创建玩家列表
-export function createPlayers(humanPlayerIndex = 0, personalities = null) {
-	const roles = assignRoles(8);
-	const playerNames = ['玩家', 'AI-小明', 'AI-小红', 'AI-小刚', 'AI-小丽', 'AI-小华', 'AI-小龙', 'AI-小凤'];
+// 玩家颜色列表（8个不同的颜色）
+const PLAYER_COLORS = [
+	'#f472b6', // 粉色
+	'#60a5fa', // 蓝色
+	'#4ade80', // 绿色
+	'#fbbf24', // 黄色
+	'#a78bfa', // 紫色
+	'#f97316', // 橙色
+	'#22d3d8', // 青色
+	'#fb7185', // 玫红色
+];
 
-	return roles.map((role, index) => {
-		// 获取对应的人设（AI 玩家从索引 1 开始）
+// 创建玩家列表
+export function createPlayers(humanPlayerIndex = 0, personalities = null, playerName = '玩家') {
+	const roles = assignRoles(8);
+	const aiNames = ['小明', '小红', '小刚', '小丽', '小华', '小龙', '小凤'];
+	const shuffledAINames = shuffle(aiNames);
+	const shuffledColors = shuffle(PLAYER_COLORS);
+
+	// 随机决定人类玩家的位置（0-7）
+	const humanPosition = Math.floor(Math.random() * 8);
+
+	// 创建所有玩家
+	const players = [];
+	let aiNameIndex = 0;
+
+	for (let i = 0; i < 8; i++) {
+		const isHuman = i === humanPosition;
+		const role = roles[i];
+
+		// 获取对应的人设（仅AI玩家）
 		let personality = null;
-		if (index > 0 && personalities) {
-			personality = personalities.find(p => p.id === index) || null;
+		if (!isHuman && personalities) {
+			personality = personalities.find(p => p.id === i) || null;
 		}
 
-		return {
-			id: index,
-			name: playerNames[index],
+		players.push({
+			id: i,
+			name: isHuman ? playerName : shuffledAINames[aiNameIndex++],
 			role: role,
 			isAlive: true,
-			isHuman: index === humanPlayerIndex,
+			isHuman: isHuman,
+			// 玩家颜色
+			color: shuffledColors[i],
 			// 女巫的药水状态
 			witchPotion: role.id === 'witch' ? { heal: true, poison: true } : null,
 			// 预言家的查验记录
 			seerResults: role.id === 'seer' ? [] : null,
 			// AI 人设
 			personality: personality
-		};
-	});
+		});
+	}
+
+	return players;
 }
 
 // 获取存活玩家

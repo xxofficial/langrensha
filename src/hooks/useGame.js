@@ -36,9 +36,9 @@ export function useGame() {
 	}, []);
 
 	// 开始新游戏
-	const startGame = useCallback((personalities = null) => {
+	const startGame = useCallback((personalities = null, playerName = '玩家') => {
 		abortRef.current = false;
-		const newPlayers = createPlayers(0, personalities);
+		const newPlayers = createPlayers(0, personalities, playerName);
 		setPlayers(newPlayers);
 		setPhase(GAME_PHASES.ROLE_REVEAL);
 		setDay(1);
@@ -206,7 +206,7 @@ export function useGame() {
 
 				if (decision.useHeal) {
 					witchActions.healed = true;
-					addLog('女巫使用了解药', 'witch');
+					// 不显示女巫用药信息
 					setPlayers(prev => prev.map(p =>
 						p.id === witch.id
 							? { ...p, witchPotion: { ...p.witchPotion, heal: false } }
@@ -215,14 +215,14 @@ export function useGame() {
 				} else if (decision.usePoison && decision.poisonTarget) {
 					const poisonedPlayer = players.find(p => p.id === decision.poisonTarget);
 					witchActions.poisoned = decision.poisonTarget;
-					addLog(`女巫使用了毒药`, 'witch');
+					// 不显示女巫用药信息
 					setPlayers(prev => prev.map(p =>
 						p.id === witch.id
 							? { ...p, witchPotion: { ...p.witchPotion, poison: false } }
 							: p
 					));
 				} else {
-					addLog('女巫选择不使用药水', 'witch');
+					// 不显示女巫用药信息
 				}
 			}
 		}
@@ -254,14 +254,16 @@ export function useGame() {
 		}
 
 		// 保存夜晚结果
-		setNightActions({ killTarget, seerResult, witchActions, deaths });
+		// 记录第一个死亡玩家的ID，用于确定发言顺序
+		const firstDeathId = deaths.length > 0 ? deaths[0] : null;
+		setNightActions({ killTarget, seerResult, witchActions, deaths, firstDeathId });
 		setPhase(GAME_PHASES.NIGHT_RESULT);
 
 	}, []);
 
 	// 显示夜晚结果并进入白天
 	const showNightResult = useCallback(() => {
-		const { deaths } = nightActions;
+		const { deaths, firstDeathId } = nightActions;
 
 		addLog(`=== 第${day}天白天 ===`, 'phase');
 		addLog('天亮了，请睁眼', 'system');
@@ -290,27 +292,47 @@ export function useGame() {
 		} else {
 			setSpeeches([]);
 			setPhase(GAME_PHASES.DAY_SPEECH);
-			startDaySpeech();
+			startDaySpeech(firstDeathId);
 		}
 	}, [nightActions, day, players, addLog]);
 
 	// 开始白天发言
-	const startDaySpeech = useCallback(async () => {
+	const startDaySpeech = useCallback(async (firstDeathId = null) => {
 		if (abortRef.current) return;
 
 		const alivePlayers = getAlivePlayers(players);
+
+		// 确定发言起始位置：从死亡玩家的下一位开始
+		let startIndex = 0;
+		if (firstDeathId !== null) {
+			// 找到死亡玩家在原始玩家列表中的位置
+			const deadPlayerIndex = players.findIndex(p => p.id === firstDeathId);
+			if (deadPlayerIndex !== -1) {
+				// 找到下一个存活玩家
+				for (let offset = 1; offset <= players.length; offset++) {
+					const nextIndex = (deadPlayerIndex + offset) % players.length;
+					const nextPlayer = players[nextIndex];
+					if (nextPlayer.isAlive) {
+						startIndex = alivePlayers.findIndex(p => p.id === nextPlayer.id);
+						break;
+					}
+				}
+			}
+		}
+
 		setCurrentSpeaker(0);
 
-		// 按顺序发言
+		// 按顺序发言，从 startIndex 开始循环
 		for (let i = 0; i < alivePlayers.length; i++) {
 			if (abortRef.current) return;
 
-			const speaker = alivePlayers[i];
+			const speakerIndex = (startIndex + i) % alivePlayers.length;
+			const speaker = alivePlayers[speakerIndex];
 			setCurrentSpeaker(speaker.id);
 
 			if (speaker.isHuman) {
-				// 等待人类玩家发言
-				setHumanAction({ type: 'speech', speakerId: speaker.id });
+				// 等待人类玩家发言，保存发言顺序信息
+				setHumanAction({ type: 'speech', speakerId: speaker.id, startIndex, currentIndex: i });
 				return;
 			} else {
 				// AI发言
@@ -376,15 +398,18 @@ export function useGame() {
 		setAllSpeeches(prev => [...prev, speechEntry]);
 
 		addLog(`${speaker.name}: ${content}`, 'speech');
+
+		// 保存当前的发言顺序信息
+		const { startIndex, currentIndex } = humanAction || { startIndex: 0, currentIndex: 0 };
 		setHumanAction(null);
 
 		// 继续后续AI发言
 		const alivePlayers = getAlivePlayers(players);
-		const humanIndex = alivePlayers.findIndex(p => p.isHuman);
 
-		for (let i = humanIndex + 1; i < alivePlayers.length; i++) {
+		for (let i = currentIndex + 1; i < alivePlayers.length; i++) {
 			if (abortRef.current) return;
-			const nextSpeaker = alivePlayers[i];
+			const speakerIndex = (startIndex + i) % alivePlayers.length;
+			const nextSpeaker = alivePlayers[speakerIndex];
 			setCurrentSpeaker(nextSpeaker.id);
 			await generateAndAddSpeech(nextSpeaker);
 		}
@@ -392,7 +417,7 @@ export function useGame() {
 		setCurrentSpeaker(null);
 		setPhase(GAME_PHASES.DAY_VOTE);
 		addLog('发言结束，开始投票', 'system');
-	}, [players, addLog, generateAndAddSpeech]);
+	}, [players, day, humanAction, addLog, generateAndAddSpeech]);
 
 	// 处理投票
 	const processVotes = useCallback(async () => {
@@ -595,7 +620,7 @@ export function useGame() {
 			}
 
 			case 'witch_heal': {
-				addLog('你使用解药救了被杀的玩家', 'witch');
+				// 仅显示给自己看，不在公共日志中显示
 				setPlayers(prev => prev.map(p =>
 					p.isHuman && p.role.id === 'witch'
 						? { ...p, witchPotion: { ...p.witchPotion, heal: false } }
@@ -608,7 +633,7 @@ export function useGame() {
 
 			case 'witch_poison': {
 				const target = players.find(p => p.id === targetId);
-				addLog(`你使用毒药毒死了 ${target?.name}`, 'witch');
+				// 仅显示给自己看，不在公共日志中显示
 				setPlayers(prev => prev.map(p =>
 					p.isHuman && p.role.id === 'witch'
 						? { ...p, witchPotion: { ...p.witchPotion, poison: false } }
@@ -620,7 +645,7 @@ export function useGame() {
 			}
 
 			case 'witch_skip': {
-				addLog('你选择不使用药水', 'witch');
+				// 仅显示给自己看，不在公共日志中显示
 				setHumanAction(null);
 				await finalizeNight(humanAction?.killTarget, humanAction?.seerResult, { healed: false, poisoned: null });
 				break;

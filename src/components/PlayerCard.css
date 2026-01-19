@@ -43,8 +43,18 @@
 
 .player-name {
   font-weight: 600;
-  color: #e2e8f0;
   font-size: 0.95rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.player-color-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
 }
 
 .player-tag {

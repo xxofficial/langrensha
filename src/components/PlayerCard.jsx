@@ -23,7 +23,10 @@ export function PlayerCard({ player, isCurrentSpeaker, onSelect, selectable, sho
 					showRole || player.isHuman ? player.role.emoji : '❓'
 				) : '💀'}
 			</div>
-			<div className="player-name">{player.name}</div>
+			<div className="player-name" style={{ color: player.color }}>
+				<span className="player-color-dot" style={{ backgroundColor: player.color }}></span>
+				{player.name}
+			</div>
 			{player.isHuman && <div className="player-tag">你</div>}
 			{!player.isAlive && showRole && <div className="player-role-reveal">{player.role.name}</div>}
 			{showRole && player.isAlive && <div className="player-role-name">{player.role.name}</div>}
