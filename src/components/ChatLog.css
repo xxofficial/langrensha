@@ -4,7 +4,8 @@
 	border-radius: 16px;
 	display: flex;
 	flex-direction: column;
-	height: 400px;
+	flex: 1;
+	min-height: 200px;
 	overflow: hidden;
 }
 

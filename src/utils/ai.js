@@ -57,6 +57,9 @@ function buildGameContext(gameState) {
 	// 获取已死亡的玩家
 	const deadPlayers = (players || []).filter(p => !p.isAlive);
 
+	// 格式化玩家名字（加上序号）
+	const formatPlayerName = (player) => `${player.name} #${player.id + 1}`;
+
 	// 格式化历史发言（按天分组）
 	const formatHistoricalSpeeches = () => {
 		if (!allSpeeches || allSpeeches.length === 0) {
@@ -77,7 +80,10 @@ function buildGameContext(gameState) {
 		Object.keys(speechesByDay).sort((a, b) => a - b).forEach(d => {
 			result += `\n【第${d}天发言】\n`;
 			speechesByDay[d].forEach(s => {
-				result += `${s.playerName}: ${s.content}\n`;
+				// 根据 playerId 查找玩家获取序号
+				const player = (players || []).find(p => p.id === s.playerId);
+				const playerLabel = player ? formatPlayerName(player) : s.playerName;
+				result += `${playerLabel}: ${s.content}\n`;
 			});
 		});
 
@@ -89,14 +95,18 @@ function buildGameContext(gameState) {
 		if (!todaySpeeches || todaySpeeches.length === 0) {
 			return '今天暂无发言';
 		}
-		return todaySpeeches.map(s => `${s.playerName}: ${s.content}`).join('\n');
+		return todaySpeeches.map(s => {
+			const player = (players || []).find(p => p.id === s.playerId);
+			const playerLabel = player ? formatPlayerName(player) : s.playerName;
+			return `${playerLabel}: ${s.content}`;
+		}).join('\n');
 	};
 
 	return {
 		currentDay: day,
-		alivePlayerNames: alivePlayers.map(p => p.name).join(', '),
+		alivePlayerNames: alivePlayers.map(p => formatPlayerName(p)).join(', '),
 		alivePlayerCount: alivePlayers.length,
-		deadPlayerNames: deadPlayers.length > 0 ? deadPlayers.map(p => p.name).join(', ') : '无',
+		deadPlayerNames: deadPlayers.length > 0 ? deadPlayers.map(p => formatPlayerName(p)).join(', ') : '无',
 		deadPlayerCount: deadPlayers.length,
 		historicalSpeeches: formatHistoricalSpeeches(),
 		todaySpeeches: formatTodaySpeeches()
@@ -134,6 +144,31 @@ function buildSystemPrompt(player, gameState) {
 	// 获取人设提示词
 	const personalityPrompt = buildPersonalityPrompt(player.personality);
 
+	// 发言顺序信息
+	let speechOrderInfo = '';
+	if (gameState.speechOrder) {
+		const { current, total, speakingOrder } = gameState.speechOrder;
+
+		// 构建完整的发言顺序列表
+		let orderList = '';
+		if (speakingOrder && speakingOrder.length > 0) {
+			orderList = speakingOrder.map((p, idx) => {
+				const marker = idx + 1 === current ? '→' : ' ';
+				const status = idx + 1 < current ? '(已发言)' : (idx + 1 === current ? '(当前)' : '(未发言)');
+				return `${marker} ${idx + 1}. ${p.name} #${p.id + 1} ${status}`;
+			}).join('\n');
+		}
+
+		speechOrderInfo = `\n=== 本轮发言顺序 ===
+${orderList}
+
+你是第 ${current} 个发言的玩家（共 ${total} 人）。`;
+		if (current < total) {
+			speechOrderInfo += `
+排在你后面的玩家尚未发言，他们不是沉默，只是还没轮到。请不要质疑尚未发言的玩家为什么不说话。`;
+		}
+	}
+
 	return `你正在玩一个8人狼人杀游戏。这是第${gameState.day}天${gameState.phase === 'day' ? '白天' : '夜晚'}。
 
 ${rolePrompts[player.role.id]}
@@ -144,13 +179,14 @@ ${personalityPrompt}
 已死亡玩家: ${context.deadPlayerNames}
 ${gameState.lastNightDeath ? `昨晚死亡: ${gameState.lastNightDeath}` : ''}
 ${gameState.lastVoteDeath ? `上次投票放逐: ${gameState.lastVoteDeath}` : ''}
+${speechOrderInfo}
 
 === 所有历史发言记录 ===
 ${context.historicalSpeeches}
 
 请发表你的看法，要有个人特色，可以怀疑某人或为自己辩护。发言要像真人玩家一样，可长可短，根据当前局势自由决定发言内容和长度，并且要结合历史发言分析场上局势，符合你的人设性格和说话风格。
 
-【重要提示】这是一个纯语言游戏，你的发言只需要包含说话内容，不要描述任何动作、表情、肢体语言或心理活动（如"*皱眉*"、"（沉思）"、"露出笑容"等）。直接说出你要表达的话即可。`;
+【重要提示】这是一个纯语言游戏，你的发言只需要包含说话内容，不要描述任何动作、表情、肢体语言或心理活动（如"*皱眉*"、"（沉思）"、"露出笑容"等）,也不要有任何与本游戏无关的描述。直接说出你要表达的话即可。`;
 }
 
 // 构建投票系统提示词
@@ -159,7 +195,7 @@ function buildVotePrompt(player, gameState, candidates) {
 
 	const roleHints = {
 		werewolf: `作为狼人，你应该投票给对狼人阵营威胁最大的人，或者跟随多数投票避免暴露。
-千万不要投给自己的狼人队友！`,
+看情况也可以投给自己的狼人队友，以迷惑好人。`,
 		seer: `作为预言家，根据你的查验结果投票。如果查到狼人就投他。`,
 		witch: `作为女巫，分析场上局势决定投票。`,
 		hunter: `作为猎人，分析场上局势决定投票。`,
@@ -198,7 +234,21 @@ export async function generateAISpeech(player, gameState) {
 			temperature: 0.8
 		});
 
-		return completion.choices[0].message.content;
+		let content = completion.choices[0].message.content;
+
+		// 后处理：替换发言中的玩家名字为带序号格式
+		const allPlayers = gameState.players || [];
+		// 按名字长度降序排列，避免短名字先被替换导致长名字替换不完整
+		const sortedPlayers = [...allPlayers].sort((a, b) => b.name.length - a.name.length);
+		for (const p of sortedPlayers) {
+			// 只替换没有序号的玩家名字（避免重复添加序号）
+			const nameWithNumber = `${p.name} #${p.id + 1}`;
+			// 使用正则匹配玩家名字，但排除已经带序号的情况
+			const regex = new RegExp(`${p.name}(?! #\\d+)`, 'g');
+			content = content.replace(regex, nameWithNumber);
+		}
+
+		return content;
 	} catch (error) {
 		console.error('AI 发言生成失败:', error);
 		throw error;

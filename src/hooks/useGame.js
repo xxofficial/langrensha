@@ -129,10 +129,13 @@ export function useGame() {
 
 		// 2. 预言家查验
 		const seer = alivePlayers.find(p => p.role.id === 'seer');
-		if (seer) {
-			addLog('预言家睁眼...', 'seer');
+		const allSeer = players.find(p => p.role.id === 'seer');
+		const isHumanSeer = humanPlayer?.role.id === 'seer';
 
-			if (humanPlayer?.role.id === 'seer') {
+		addLog('预言家睁眼...', 'seer');
+
+		if (seer) {
+			if (isHumanSeer) {
 				setHumanAction({
 					type: 'seer_check',
 					targets: alivePlayers.filter(p => p.id !== humanPlayer.id),
@@ -158,7 +161,11 @@ export function useGame() {
 					}
 				}
 			}
+		} else if (allSeer && isHumanSeer) {
+			// 仅当玩家是预言家时显示死亡信息
+			addLog(`预言家 ${allSeer.name} 已死亡`, 'seer');
 		}
+		addLog('预言家闭眼...', 'seer');
 
 		await continueNightAfterSeer(killTarget, seerResult);
 	}, [players, day, speeches, addLog]);
@@ -173,10 +180,13 @@ export function useGame() {
 
 		// 3. 女巫用药
 		const witch = alivePlayers.find(p => p.role.id === 'witch');
-		if (witch && (witch.witchPotion?.heal || witch.witchPotion?.poison)) {
-			addLog('女巫睁眼...', 'witch');
+		const allWitch = players.find(p => p.role.id === 'witch');
+		const isHumanWitch = humanPlayer?.role.id === 'witch';
 
-			if (humanPlayer?.role.id === 'witch') {
+		addLog('女巫睁眼...', 'witch');
+
+		if (witch && (witch.witchPotion?.heal || witch.witchPotion?.poison)) {
+			if (isHumanWitch) {
 				const killedPlayer = killTarget ? players.find(p => p.id === killTarget) : null;
 				setHumanAction({
 					type: 'witch_action',
@@ -206,7 +216,6 @@ export function useGame() {
 
 				if (decision.useHeal) {
 					witchActions.healed = true;
-					// 不显示女巫用药信息
 					setPlayers(prev => prev.map(p =>
 						p.id === witch.id
 							? { ...p, witchPotion: { ...p.witchPotion, heal: false } }
@@ -215,17 +224,21 @@ export function useGame() {
 				} else if (decision.usePoison && decision.poisonTarget) {
 					const poisonedPlayer = players.find(p => p.id === decision.poisonTarget);
 					witchActions.poisoned = decision.poisonTarget;
-					// 不显示女巫用药信息
 					setPlayers(prev => prev.map(p =>
 						p.id === witch.id
 							? { ...p, witchPotion: { ...p.witchPotion, poison: false } }
 							: p
 					));
-				} else {
-					// 不显示女巫用药信息
 				}
 			}
+		} else if (allWitch && !allWitch.isAlive && isHumanWitch) {
+			// 仅当玩家是女巫时显示死亡信息
+			addLog(`女巫 ${allWitch.name} 已死亡`, 'witch');
+		} else if (witch && !witch.witchPotion?.heal && !witch.witchPotion?.poison && isHumanWitch) {
+			// 仅当玩家是女巫时显示无药信息
+			addLog('女巫已无药可用', 'witch');
 		}
+		addLog('女巫闭眼...', 'witch');
 
 		await finalizeNight(killTarget, seerResult, witchActions);
 	}, [players, day, speeches, addLog]);
@@ -242,7 +255,7 @@ export function useGame() {
 		if (killTarget && !witchActions.healed) {
 			deaths.push(killTarget);
 		}
-		if (witchActions.poisoned) {
+		if (witchActions.poisoned && !deaths.includes(witchActions.poisoned)) {
 			deaths.push(witchActions.poisoned);
 		}
 
@@ -332,11 +345,22 @@ export function useGame() {
 
 			if (speaker.isHuman) {
 				// 等待人类玩家发言，保存发言顺序信息
-				setHumanAction({ type: 'speech', speakerId: speaker.id, startIndex, currentIndex: i });
+				// 构建完整的发言顺序列表
+				const speakingOrder = alivePlayers.map((_, idx) => {
+					const actualIdx = (startIndex + idx) % alivePlayers.length;
+					return alivePlayers[actualIdx];
+				});
+				setHumanAction({ type: 'speech', speakerId: speaker.id, startIndex, currentIndex: i, totalSpeakers: alivePlayers.length, speakingOrder });
 				return;
 			} else {
-				// AI发言
-				await generateAndAddSpeech(speaker);
+				// AI发言，传入发言顺序信息
+				// 构建完整的发言顺序列表
+				const speakingOrder = alivePlayers.map((_, idx) => {
+					const actualIdx = (startIndex + idx) % alivePlayers.length;
+					return alivePlayers[actualIdx];
+				});
+				const speechOrder = { current: i + 1, total: alivePlayers.length, speakingOrder };
+				await generateAndAddSpeech(speaker, speechOrder);
 			}
 		}
 
@@ -347,7 +371,7 @@ export function useGame() {
 	}, [players, addLog]);
 
 	// 生成并添加AI发言
-	const generateAndAddSpeech = useCallback(async (speaker) => {
+	const generateAndAddSpeech = useCallback(async (speaker, speechOrder = null) => {
 		if (abortRef.current) return;
 		setIsProcessing(true);
 
@@ -359,7 +383,8 @@ export function useGame() {
 				todaySpeeches: speeches,
 				allSpeeches,
 				players,
-				lastNightDeath: nightActions.deaths?.map(id => players.find(p => p.id === id)?.name).join(', ') || null
+				lastNightDeath: nightActions.deaths?.map(id => players.find(p => p.id === id)?.name).join(', ') || null,
+				speechOrder  // 发言顺序信息：{ current: 当前第几个, total: 共几人 }
 			};
 
 			const content = await generateAISpeech(speaker, gameState);
@@ -382,6 +407,7 @@ export function useGame() {
 		setIsProcessing(false);
 	}, [day, players, speeches, nightActions, addLog]);
 
+
 	// 人类玩家发言
 	const humanSpeak = useCallback(async (content) => {
 		const speaker = players.find(p => p.isHuman);
@@ -400,18 +426,21 @@ export function useGame() {
 		addLog(`${speaker.name}: ${content}`, 'speech');
 
 		// 保存当前的发言顺序信息
-		const { startIndex, currentIndex } = humanAction || { startIndex: 0, currentIndex: 0 };
+		const { startIndex, currentIndex, totalSpeakers, speakingOrder } = humanAction || { startIndex: 0, currentIndex: 0, totalSpeakers: 0, speakingOrder: [] };
 		setHumanAction(null);
 
 		// 继续后续AI发言
 		const alivePlayers = getAlivePlayers(players);
+		const total = totalSpeakers || alivePlayers.length;
 
 		for (let i = currentIndex + 1; i < alivePlayers.length; i++) {
 			if (abortRef.current) return;
 			const speakerIndex = (startIndex + i) % alivePlayers.length;
 			const nextSpeaker = alivePlayers[speakerIndex];
 			setCurrentSpeaker(nextSpeaker.id);
-			await generateAndAddSpeech(nextSpeaker);
+			// 传入发言顺序信息
+			const speechOrder = { current: i + 1, total, speakingOrder };
+			await generateAndAddSpeech(nextSpeaker, speechOrder);
 		}
 
 		setCurrentSpeaker(null);
@@ -437,23 +466,34 @@ export function useGame() {
 			players
 		};
 
+		// 记录已投票的AI玩家ID
+		const votedPlayerIds = [];
+
 		for (const voter of alivePlayers) {
 			if (abortRef.current) return;
 
 			if (voter.isHuman) {
-				setHumanAction({ type: 'vote', targets: alivePlayers.filter(p => p.id !== voter.id) });
+				// 将已投票的AI结果传递给 humanAction
+				setHumanAction({
+					type: 'vote',
+					targets: alivePlayers.filter(p => p.id !== voter.id),
+					votedPlayerIds,  // 已投票的AI玩家ID列表
+					previousVotes: { ...newVotes }  // 之前AI的投票结果
+				});
 				setIsProcessing(false);
 				return;
 			} else {
 				const candidates = alivePlayers.filter(p => p.id !== voter.id);
 				const voteTarget = await generateAIVote(voter, gameState, candidates);
 				newVotes[voter.id] = voteTarget;
+				votedPlayerIds.push(voter.id);
 				addLog(`${voter.name} 投票完成`, 'vote');
 			}
 		}
 
 		await finalizeVotes(newVotes);
 	}, [players, day, speeches, addLog]);
+
 
 	// 人类投票
 	const humanVote = useCallback(async (targetId) => {
@@ -464,7 +504,10 @@ export function useGame() {
 		const target = players.find(p => p.id === targetId);
 		addLog(`${humanPlayer.name} 投票给 ${target?.name}`, 'vote');
 
-		const newVotes = { [humanPlayer.id]: targetId };
+		// 获取之前已投票的AI结果
+		const { votedPlayerIds = [], previousVotes = {} } = humanAction || {};
+		const newVotes = { ...previousVotes, [humanPlayer.id]: targetId };
+
 		setHumanAction(null);
 		setIsProcessing(true);
 
@@ -477,10 +520,12 @@ export function useGame() {
 			players
 		};
 
-		// 继续AI投票
+		// 只处理尚未投票的AI玩家
 		for (const voter of alivePlayers) {
 			if (abortRef.current) return;
 			if (voter.isHuman) continue;
+			// 跳过已经投过票的AI
+			if (votedPlayerIds.includes(voter.id)) continue;
 
 			const candidates = alivePlayers.filter(p => p.id !== voter.id);
 			const voteTarget = await generateAIVote(voter, gameState, candidates);
@@ -489,7 +534,8 @@ export function useGame() {
 		}
 
 		await finalizeVotes(newVotes);
-	}, [players, day, speeches, addLog]);
+	}, [players, day, speeches, humanAction, addLog]);
+
 
 	// 统计投票结果
 	const finalizeVotes = useCallback(async (allVotes) => {

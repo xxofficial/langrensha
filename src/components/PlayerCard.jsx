@@ -25,7 +25,7 @@ export function PlayerCard({ player, isCurrentSpeaker, onSelect, selectable, sho
 			</div>
 			<div className="player-name" style={{ color: player.color }}>
 				<span className="player-color-dot" style={{ backgroundColor: player.color }}></span>
-				{player.name}
+				{player.name} <span className="player-number">#{player.id + 1}</span>
 			</div>
 			{player.isHuman && <div className="player-tag">你</div>}
 			{!player.isAlive && showRole && <div className="player-role-reveal">{player.role.name}</div>}
