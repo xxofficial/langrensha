@@ -230,7 +230,7 @@ export async function generateAISpeech(player, gameState) {
 				{ role: 'system', content: buildSystemPrompt(player, gameState) },
 				{ role: 'user', content: '现在轮到你发言了，请发表你的看法。' }
 			],
-			max_tokens: 150,
+			max_tokens: 500,
 			temperature: 0.8
 		});
 
